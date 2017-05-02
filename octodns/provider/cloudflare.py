@@ -35,6 +35,7 @@ class CloudflareProvider(BaseProvider):
         token: foo
     '''
     SUPPORTS_GEO = False
+    SUPPORTS_PROXY = True
     # TODO: support SRV
     UNSUPPORTED_TYPES = ('NAPTR', 'PTR', 'SOA', 'SRV', 'SSHFP')
 
@@ -96,8 +97,15 @@ class CloudflareProvider(BaseProvider):
             'values': [r['content'] for r in records],
         }
 
-    _data_for_A = _data_for_multiple
-    _data_for_AAAA = _data_for_multiple
+    def _data_for_A(self, _type, records):
+        return {
+            'ttl': records[0]['ttl'],
+            'type': _type,
+            'proxied': records[0].get('proxied', False),
+            'values': [r['content'] for r in records],
+        }
+
+    _data_for_AAAA = _data_for_A
     _data_for_SPF = _data_for_multiple
 
     def _data_for_TXT(self, _type, records):
@@ -112,6 +120,7 @@ class CloudflareProvider(BaseProvider):
         return {
             'ttl': only['ttl'],
             'type': _type,
+            'proxied': only.get('proxied', False),
             'value': '{}.'.format(only['content'])
         }
 
@@ -223,6 +232,7 @@ class CloudflareProvider(BaseProvider):
                 'name': name,
                 'type': new._type,
                 'ttl': max(1, new.ttl),
+                'proxied': getattr(new, 'proxied', False),
             })
             self._request('POST', path, data=content)
 

@@ -257,7 +257,33 @@ class _GeoMixin(_ValuesMixin):
         return super(_GeoMixin, self).__repr__()
 
 
-class ARecord(_GeoMixin, Record):
+class _ProxyMixin(_ValuesMixin):
+    def __init__(self, zone, name, data, *args, **kwargs):
+        super(_ProxyMixin, self).__init__(zone, name, data, *args, **kwargs)
+        self.proxied = data.get('proxied', None)
+
+    def _data(self):
+        ret = super(_ProxyMixin, self)._data()
+        if self.proxied is not None:
+            ret['proxied'] = self.proxied
+        return ret
+
+    def changes(self, other, target):
+        if getattr(target, 'SUPPORTS_PROXY', False) and self.proxied is not None and other.proxied is not None:
+            if self.proxied != other.proxied:
+                return Update(self, other)
+        return super(_ProxyMixin, self).changes(other, target)
+
+    def __repr__(self):
+        if self.proxied is not None:
+            return '<{} {} {}, {}, {}, {}>'.format(self.__class__.__name__,
+                                                   self._type, self.ttl,
+                                                   self.fqdn, self.values,
+                                                   self.proxied)
+        return super(_ProxyMixin, self).__repr__()
+
+
+class ARecord(_GeoMixin, _ProxyMixin, Record):
     _type = 'A'
 
     def _process_values(self, values):
@@ -270,7 +296,7 @@ class ARecord(_GeoMixin, Record):
         return values
 
 
-class AaaaRecord(_GeoMixin, Record):
+class AaaaRecord(_GeoMixin, _ProxyMixin, Record):
     _type = 'AAAA'
 
     def _process_values(self, values):
