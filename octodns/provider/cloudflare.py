@@ -184,7 +184,7 @@ class CloudflareProvider(BaseProvider):
         if isinstance(change, Update):
             existing = change.existing.data
             new = change.new.data
-            new['ttl'] = max(120, new['ttl'])
+            new['ttl'] = max(1, new['ttl'])
             if new == existing:
                 return False
         return True
@@ -222,8 +222,7 @@ class CloudflareProvider(BaseProvider):
             content.update({
                 'name': name,
                 'type': new._type,
-                # Cloudflare has a min ttl of 120s
-                'ttl': max(self.MIN_TTL, new.ttl),
+                'ttl': max(1, new.ttl),
             })
             self._request('POST', path, data=content)
 
