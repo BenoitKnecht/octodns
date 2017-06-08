@@ -69,7 +69,10 @@ class CloudflareProvider(BaseProvider):
         self.log.debug('_request:   status=%d', resp.status_code)
         if resp.status_code == 403:
             raise CloudflareAuthenticationError(resp.json())
-        resp.raise_for_status()
+        elif resp.status_code == 400 and resp.json()['errors'][0]['code'] == 81057:
+            self.log.debug('_request: message=%s', 'the record already exists')
+        else:
+            resp.raise_for_status()
         return resp.json()
 
     @property
