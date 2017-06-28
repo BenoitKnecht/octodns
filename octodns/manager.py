@@ -13,6 +13,7 @@ import logging
 
 from .provider.base import BaseProvider
 from .provider.yaml import YamlProvider
+from .record import Record
 from .yaml import safe_load
 from .zone import Zone
 
@@ -59,7 +60,7 @@ class MainThreadExecutor(object):
 class Manager(object):
     log = logging.getLogger('Manager')
 
-    def __init__(self, config_file, max_workers=None):
+    def __init__(self, config_file, max_workers=None, include_meta=False):
         self.log.info('__init__: config_file=%s', config_file)
 
         # Read our config file
@@ -69,10 +70,15 @@ class Manager(object):
         manager_config = self.config.get('manager', {})
         max_workers = manager_config.get('max_workers', 1) \
             if max_workers is None else max_workers
+        self.log.info('__init__:   max_workers=%d', max_workers)
         if max_workers > 1:
             self._executor = ThreadPoolExecutor(max_workers=max_workers)
         else:
             self._executor = MainThreadExecutor()
+
+        self.include_meta = include_meta or manager_config.get('include_meta',
+                                                               False)
+        self.log.info('__init__:   max_workers=%s', self.include_meta)
 
         self.log.debug('__init__:   configuring providers')
         self.providers = {}
@@ -175,6 +181,13 @@ class Manager(object):
         plans = []
 
         for target in targets:
+            if self.include_meta:
+                meta = Record.new(zone, 'octodns-meta', {
+                    'type': 'TXT',
+                    'ttl': 60,
+                    'value': 'provider={}'.format(target.id)
+                })
+                zone.add_record(meta, replace=True)
             plan = target.plan(zone)
             if plan:
                 plans.append((target, plan))
@@ -205,6 +218,13 @@ class Manager(object):
                 raise Exception('Zone {} is missing targets'.format(zone_name))
             if eligible_targets:
                 targets = filter(lambda d: d in eligible_targets, targets)
+
+            if not targets:
+                # Don't bother planning (and more importantly populating) zones
+                # when we don't have any eligible targets, waste of
+                # time/resources
+                self.log.info('sync:   no eligible targets, skipping')
+                continue
 
             self.log.info('sync:   sources=%s -> targets=%s', sources, targets)
 
@@ -273,12 +293,18 @@ class Manager(object):
             for target, plan in plans:
                 plan.raise_if_unsafe()
 
-        if dry_run or config.get('always-dry-run', False):
+        if dry_run:
             return 0
 
         total_changes = 0
         self.log.debug('sync:   applying')
+        zones = self.config['zones']
         for target, plan in plans:
+            zone_name = plan.existing.name
+            if zones[zone_name].get('always-dry-run', False):
+                self.log.info('sync: zone=%s skipping always-dry-run',
+                              zone_name)
+                continue
             total_changes += target.apply(plan)
 
         self.log.info('sync:   %d total changes', total_changes)
@@ -309,7 +335,7 @@ class Manager(object):
 
         return zb.changes(za, _AggregateTarget(a + b))
 
-    def dump(self, zone, output_dir, source, *sources):
+    def dump(self, zone, output_dir, lenient, source, *sources):
         '''
         Dump zone data from the specified source
         '''
@@ -328,7 +354,7 @@ class Manager(object):
 
         zone = Zone(zone, self.configured_sub_zones(zone))
         for source in sources:
-            source.populate(zone)
+            source.populate(zone, lenient=lenient)
 
         plan = target.plan(zone)
         target.apply(plan)

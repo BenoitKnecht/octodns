@@ -19,6 +19,10 @@ class DuplicateRecordException(Exception):
     pass
 
 
+class InvalidNodeException(Exception):
+    pass
+
+
 def _is_eligible(record):
     # Should this record be considered when computing changes
     # We ignore all top-level NS records
@@ -45,9 +49,13 @@ class Zone(object):
     def hostname_from_fqdn(self, fqdn):
         return self._name_re.sub('', fqdn)
 
-    def add_record(self, record):
+    def add_record(self, record, replace=False):
         name = record.name
         last = name.split('.')[-1]
+
+        if replace and record in self.records:
+            self.records.remove(record)
+
         if last in self.sub_zones:
             if name != last:
                 # it's a record for something under a sub-zone
@@ -59,9 +67,18 @@ class Zone(object):
                 raise SubzoneRecordException('Record {} a managed sub-zone '
                                              'and not of type NS'
                                              .format(record.fqdn))
-        if record in self.records:
-            raise DuplicateRecordException('Duplicate record {}, type {}'
-                                           .format(record.fqdn, record._type))
+        # TODO: this is pretty inefficent
+        for existing in self.records:
+            if record == existing:
+                raise DuplicateRecordException('Duplicate record {}, type {}'
+                                               .format(record.fqdn,
+                                                       record._type))
+            elif name == existing.name and (record._type == 'CNAME' or
+                                            existing._type == 'CNAME'):
+                raise InvalidNodeException('Invalid state, CNAME at {} '
+                                           'cannot coexist with other records'
+                                           .format(record.fqdn))
+
         self.records.add(record)
 
     def changes(self, desired, target):
@@ -76,8 +93,12 @@ class Zone(object):
 
         # Find diffs & removes
         for record in filter(_is_eligible, self.records):
+            if record.ignored:
+                continue
             try:
                 desired_record = desired_records[record]
+                if desired_record.ignored:
+                    continue
             except KeyError:
                 if not target.supports(record):
                     self.log.debug('changes:  skipping record=%s %s - %s does '
@@ -103,6 +124,8 @@ class Zone(object):
         # This uses set math and our special __hash__ and __cmp__ functions as
         # well
         for record in filter(_is_eligible, desired.records - self.records):
+            if record.ignored:
+                continue
             if not target.supports(record):
                 self.log.debug('changes:  skipping record=%s %s - %s does not '
                                'support it', record.fqdn, record._type,

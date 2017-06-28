@@ -14,6 +14,8 @@ from .base import BaseProvider
 
 class PowerDnsBaseProvider(BaseProvider):
     SUPPORTS_GEO = False
+    SUPPORTS = set(('A', 'AAAA', 'ALIAS', 'CNAME', 'MX', 'NAPTR', 'NS', 'PTR',
+                    'SPF', 'SSHFP', 'SRV', 'TXT'))
     TIMEOUT = 5
 
     def __init__(self, id, host, api_key, port=8081, *args, **kwargs):
@@ -64,6 +66,7 @@ class PowerDnsBaseProvider(BaseProvider):
             'ttl': rrset['ttl']
         }
 
+    _data_for_ALIAS = _data_for_single
     _data_for_CNAME = _data_for_single
     _data_for_PTR = _data_for_single
 
@@ -80,10 +83,10 @@ class PowerDnsBaseProvider(BaseProvider):
     def _data_for_MX(self, rrset):
         values = []
         for record in rrset['records']:
-            priority, value = record['content'].split(' ', 1)
+            preference, exchange = record['content'].split(' ', 1)
             values.append({
-                'priority': priority,
-                'value': value,
+                'preference': preference,
+                'exchange': exchange,
             })
         return {
             'type': rrset['type'],
@@ -143,8 +146,9 @@ class PowerDnsBaseProvider(BaseProvider):
             'ttl': rrset['ttl']
         }
 
-    def populate(self, zone, target=False):
-        self.log.debug('populate: name=%s', zone.name)
+    def populate(self, zone, target=False, lenient=False):
+        self.log.debug('populate: name=%s, target=%s, lenient=%s', zone.name,
+                       target, lenient)
 
         resp = None
         try:
@@ -174,7 +178,7 @@ class PowerDnsBaseProvider(BaseProvider):
                 data_for = getattr(self, '_data_for_{}'.format(_type))
                 record_name = zone.hostname_from_fqdn(rrset['name'])
                 record = Record.new(zone, record_name, data_for(rrset),
-                                    source=self)
+                                    source=self, lenient=lenient)
                 zone.add_record(record)
 
         self.log.info('populate:   found %s records',
@@ -191,6 +195,7 @@ class PowerDnsBaseProvider(BaseProvider):
     def _records_for_single(self, record):
         return [{'content': record.value, 'disabled': False}]
 
+    _records_for_ALIAS = _records_for_single
     _records_for_CNAME = _records_for_single
     _records_for_PTR = _records_for_single
 
@@ -203,7 +208,7 @@ class PowerDnsBaseProvider(BaseProvider):
 
     def _records_for_MX(self, record):
         return [{
-            'content': '{} {}'.format(v.priority, v.value),
+            'content': '{} {}'.format(v.preference, v.exchange),
             'disabled': False
         } for v in record.values]
 

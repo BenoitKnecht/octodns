@@ -91,6 +91,8 @@ class DnsimpleProvider(BaseProvider):
         account: 42
     '''
     SUPPORTS_GEO = False
+    SUPPORTS = set(('A', 'AAAA', 'ALIAS', 'CNAME', 'MX', 'NAPTR', 'NS', 'PTR',
+                    'SPF', 'SRV', 'SSHFP', 'TXT'))
 
     def __init__(self, id, token, account, *args, **kwargs):
         self.log = logging.getLogger('DnsimpleProvider[{}]'.format(id))
@@ -120,12 +122,14 @@ class DnsimpleProvider(BaseProvider):
             'value': '{}.'.format(record['content'])
         }
 
+    _data_for_ALIAS = _data_for_CNAME
+
     def _data_for_MX(self, _type, records):
         values = []
         for record in records:
             values.append({
-                'priority': record['priority'],
-                'value': '{}.'.format(record['content'])
+                'preference': record['priority'],
+                'exchange': '{}.'.format(record['content'])
             })
         return {
             'ttl': records[0]['ttl'],
@@ -230,13 +234,18 @@ class DnsimpleProvider(BaseProvider):
 
         return self._zone_records[zone.name]
 
-    def populate(self, zone, target=False):
-        self.log.debug('populate: name=%s', zone.name)
+    def populate(self, zone, target=False, lenient=False):
+        self.log.debug('populate: name=%s, target=%s, lenient=%s', zone.name,
+                       target, lenient)
 
         values = defaultdict(lambda: defaultdict(list))
         for record in self.zone_records(zone):
             _type = record['type']
             if _type == 'SOA':
+                continue
+            elif _type == 'TXT' and record['content'].startswith('ALIAS for'):
+                # ALIAS has a "ride along" TXT record with 'ALIAS for XXXX',
+                # we're ignoring it
                 continue
             values[record['name']][record['type']].append(record)
 
@@ -244,7 +253,8 @@ class DnsimpleProvider(BaseProvider):
         for name, types in values.items():
             for _type, records in types.items():
                 data_for = getattr(self, '_data_for_{}'.format(_type))
-                record = Record.new(zone, name, data_for(_type, records))
+                record = Record.new(zone, name, data_for(_type, records),
+                                    source=self, lenient=lenient)
                 zone.add_record(record)
 
         self.log.info('populate:   found %s records',
@@ -273,15 +283,16 @@ class DnsimpleProvider(BaseProvider):
             'type': record._type
         }
 
+    _params_for_ALIAS = _params_for_single
     _params_for_CNAME = _params_for_single
     _params_for_PTR = _params_for_single
 
     def _params_for_MX(self, record):
         for value in record.values:
             yield {
-                'content': value.value,
+                'content': value.exchange,
                 'name': record.name,
-                'priority': value.priority,
+                'priority': value.preference,
                 'ttl': record.ttl,
                 'type': record._type
             }

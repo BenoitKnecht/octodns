@@ -22,6 +22,9 @@ class Ns1Provider(BaseProvider):
         api_key: env/NS1_API_KEY
     '''
     SUPPORTS_GEO = False
+    SUPPORTS = set(('A', 'AAAA', 'ALIAS', 'CNAME', 'MX', 'NAPTR', 'NS', 'PTR',
+                    'SPF', 'SRV', 'TXT'))
+
     ZONE_NOT_FOUND_MESSAGE = 'server error: zone not found'
 
     def __init__(self, id, api_key, *args, **kwargs):
@@ -29,9 +32,6 @@ class Ns1Provider(BaseProvider):
         self.log.debug('__init__: id=%s, api_key=***', id)
         super(Ns1Provider, self).__init__(id, *args, **kwargs)
         self._client = NSONE(apiKey=api_key)
-
-    def supports(self, record):
-        return record._type != 'SSHFP'
 
     def _data_for_A(self, _type, record):
         return {
@@ -51,15 +51,16 @@ class Ns1Provider(BaseProvider):
             'value': record['short_answers'][0],
         }
 
+    _data_for_ALIAS = _data_for_CNAME
     _data_for_PTR = _data_for_CNAME
 
     def _data_for_MX(self, _type, record):
         values = []
         for answer in record['short_answers']:
-            priority, value = answer.split(' ', 1)
+            preference, exchange = answer.split(' ', 1)
             values.append({
-                'priority': priority,
-                'value': value,
+                'preference': preference,
+                'exchange': exchange,
             })
         return {
             'ttl': record['ttl'],
@@ -110,8 +111,9 @@ class Ns1Provider(BaseProvider):
             'values': values,
         }
 
-    def populate(self, zone, target=False):
-        self.log.debug('populate: name=%s', zone.name)
+    def populate(self, zone, target=False, lenient=False):
+        self.log.debug('populate: name=%s, target=%s, lenient=%s', zone.name,
+                       target, lenient)
 
         try:
             nsone_zone = self._client.loadZone(zone.name[:-1])
@@ -126,7 +128,8 @@ class Ns1Provider(BaseProvider):
             _type = record['type']
             data_for = getattr(self, '_data_for_{}'.format(_type))
             name = zone.hostname_from_fqdn(record['domain'])
-            record = Record.new(zone, name, data_for(_type, record))
+            record = Record.new(zone, name, data_for(_type, record),
+                                source=self, lenient=lenient)
             zone.add_record(record)
 
         self.log.info('populate:   found %s records',
@@ -143,10 +146,11 @@ class Ns1Provider(BaseProvider):
     def _params_for_CNAME(self, record):
         return {'answers': [record.value], 'ttl': record.ttl}
 
+    _params_for_ALIAS = _params_for_CNAME
     _params_for_PTR = _params_for_CNAME
 
     def _params_for_MX(self, record):
-        values = [(v.priority, v.value) for v in record.values]
+        values = [(v.preference, v.exchange) for v in record.values]
         return {'answers': values, 'ttl': record.ttl}
 
     def _params_for_NAPTR(self, record):

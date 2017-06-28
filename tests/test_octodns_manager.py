@@ -88,6 +88,14 @@ class TestManager(TestCase):
                 .sync(['not.targetable.'])
         self.assertTrue('does not support targeting' in ctx.exception.message)
 
+    def test_always_dry_run(self):
+        with TemporaryDirectory() as tmpdir:
+            environ['YAML_TMP_DIR'] = tmpdir.dirname
+            tc = Manager(get_config_filename('always-dry-run.yaml')) \
+                .sync(dry_run=False)
+            # only the stuff from subzone, unit.tests. is always-dry-run
+            self.assertEquals(3, tc)
+
     def test_simple(self):
         with TemporaryDirectory() as tmpdir:
             environ['YAML_TMP_DIR'] = tmpdir.dirname
@@ -119,6 +127,12 @@ class TestManager(TestCase):
             tc = Manager(get_config_filename('simple.yaml'), max_workers=1) \
                 .sync(dry_run=False, force=True)
             self.assertEquals(19, tc)
+
+            # Include meta
+            tc = Manager(get_config_filename('simple.yaml'), max_workers=1,
+                         include_meta=True) \
+                .sync(dry_run=False, force=True)
+            self.assertEquals(23, tc)
 
     def test_eligible_targets(self):
         with TemporaryDirectory() as tmpdir:
@@ -187,15 +201,15 @@ class TestManager(TestCase):
             manager = Manager(get_config_filename('simple.yaml'))
 
             with self.assertRaises(Exception) as ctx:
-                manager.dump('unit.tests.', tmpdir.dirname, 'nope')
+                manager.dump('unit.tests.', tmpdir.dirname, False, 'nope')
             self.assertEquals('Unknown source: nope', ctx.exception.message)
 
-            manager.dump('unit.tests.', tmpdir.dirname, 'in')
+            manager.dump('unit.tests.', tmpdir.dirname, False, 'in')
 
             # make sure this fails with an IOError and not a KeyError when
             # tyring to find sub zones
             with self.assertRaises(IOError):
-                manager.dump('unknown.zone.', tmpdir.dirname, 'in')
+                manager.dump('unknown.zone.', tmpdir.dirname, False, 'in')
 
     def test_validate_configs(self):
         Manager(get_config_filename('simple-validate.yaml')).validate_configs()
