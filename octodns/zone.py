@@ -86,9 +86,13 @@ class Zone(object):
               ('CNAME' in map(lambda r: r._type, node))):
             # We're adding a CNAME to existing records or adding to an existing
             # CNAME
-            raise InvalidNodeException('Invalid state, CNAME at {} cannot '
-                                       'coexist with other records'
-                                       .format(record.fqdn))
+            #
+            # Cloudflare allows for a fake root CNAME record (which is in fact
+            # an A record), so don't raise an exception if it's a root record.
+            if record.name != '':
+                raise InvalidNodeException('Invalid state, CNAME at {} cannot '
+                                           'coexist with other records'
+                                           .format(record.fqdn))
 
         node.add(record)
 
