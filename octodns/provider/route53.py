@@ -6,6 +6,7 @@ from __future__ import absolute_import, division, print_function, \
     unicode_literals
 
 from boto3 import client
+from botocore.config import Config
 from collections import defaultdict
 from incf.countryutils.transformations import cca_to_ctca2
 from uuid import uuid4
@@ -88,6 +89,10 @@ class _Route53Record(object):
     _values_for_A = _values_for_values
     _values_for_AAAA = _values_for_values
     _values_for_NS = _values_for_values
+
+    def _values_for_CAA(self, record):
+        return ['{} {} "{}"'.format(v.flags, v.tag, v.value)
+                for v in record.values]
 
     def _values_for_value(self, record):
         return [record.value]
@@ -221,22 +226,30 @@ class Route53Provider(BaseProvider):
     In general the account used will need full permissions on Route53.
     '''
     SUPPORTS_GEO = True
-    SUPPORTS = set(('A', 'AAAA', 'CNAME', 'MX', 'NAPTR', 'NS', 'PTR', 'SPF',
-                    'SRV', 'TXT'))
+    SUPPORTS = set(('A', 'AAAA', 'CAA', 'CNAME', 'MX', 'NAPTR', 'NS', 'PTR',
+                    'SPF', 'SRV', 'TXT'))
 
     # This should be bumped when there are underlying changes made to the
     # health check config.
     HEALTH_CHECK_VERSION = '0000'
 
     def __init__(self, id, access_key_id, secret_access_key, max_changes=1000,
-                 *args, **kwargs):
+                 client_max_attempts=None, *args, **kwargs):
         self.max_changes = max_changes
         self.log = logging.getLogger('Route53Provider[{}]'.format(id))
         self.log.debug('__init__: id=%s, access_key_id=%s, '
                        'secret_access_key=***', id, access_key_id)
         super(Route53Provider, self).__init__(id, *args, **kwargs)
+
+        config = None
+        if client_max_attempts is not None:
+            self.log.info('__init__: setting max_attempts to %d',
+                          client_max_attempts)
+            config = Config(retries={'max_attempts': client_max_attempts})
+
         self._conn = client('route53', aws_access_key_id=access_key_id,
-                            aws_secret_access_key=secret_access_key)
+                            aws_secret_access_key=secret_access_key,
+                            config=config)
 
         self._r53_zones = None
         self._r53_rrsets = {}
@@ -309,6 +322,21 @@ class Route53Provider(BaseProvider):
 
     _data_for_A = _data_for_geo
     _data_for_AAAA = _data_for_geo
+
+    def _data_for_CAA(self, rrset):
+        values = []
+        for rr in rrset['ResourceRecords']:
+            flags, tag, value = rr['Value'].split(' ')
+            values.append({
+                'flags': flags,
+                'tag': tag,
+                'value': value[1:-1],
+            })
+        return {
+            'type': rrset['Type'],
+            'values': values,
+            'ttl': int(rrset['TTL'])
+        }
 
     def _data_for_single(self, rrset):
         return {
